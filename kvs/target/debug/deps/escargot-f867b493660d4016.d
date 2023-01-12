@@ -1,0 +1,17 @@
+/home/wsl/PNA/kvs/target/debug/deps/escargot-f867b493660d4016.rmeta: /home/wsl/.cargo/registry/src/github.com-1ecc6299db9ec823/escargot-0.4.0/src/lib.rs /home/wsl/.cargo/registry/src/github.com-1ecc6299db9ec823/escargot-0.4.0/src/build.rs /home/wsl/.cargo/registry/src/github.com-1ecc6299db9ec823/escargot-0.4.0/src/cargo.rs /home/wsl/.cargo/registry/src/github.com-1ecc6299db9ec823/escargot-0.4.0/src/msg.rs /home/wsl/.cargo/registry/src/github.com-1ecc6299db9ec823/escargot-0.4.0/src/run.rs /home/wsl/.cargo/registry/src/github.com-1ecc6299db9ec823/escargot-0.4.0/src/error.rs /home/wsl/.cargo/registry/src/github.com-1ecc6299db9ec823/escargot-0.4.0/src/format/mod.rs /home/wsl/.cargo/registry/src/github.com-1ecc6299db9ec823/escargot-0.4.0/src/format/diagnostic.rs /home/wsl/PNA/kvs/target/debug/build/escargot-39feda294c78a735/out/current_target.txt
+
+/home/wsl/PNA/kvs/target/debug/deps/libescargot-f867b493660d4016.rlib: /home/wsl/.cargo/registry/src/github.com-1ecc6299db9ec823/escargot-0.4.0/src/lib.rs /home/wsl/.cargo/registry/src/github.com-1ecc6299db9ec823/escargot-0.4.0/src/build.rs /home/wsl/.cargo/registry/src/github.com-1ecc6299db9ec823/escargot-0.4.0/src/cargo.rs /home/wsl/.cargo/registry/src/github.com-1ecc6299db9ec823/escargot-0.4.0/src/msg.rs /home/wsl/.cargo/registry/src/github.com-1ecc6299db9ec823/escargot-0.4.0/src/run.rs /home/wsl/.cargo/registry/src/github.com-1ecc6299db9ec823/escargot-0.4.0/src/error.rs /home/wsl/.cargo/registry/src/github.com-1ecc6299db9ec823/escargot-0.4.0/src/format/mod.rs /home/wsl/.cargo/registry/src/github.com-1ecc6299db9ec823/escargot-0.4.0/src/format/diagnostic.rs /home/wsl/PNA/kvs/target/debug/build/escargot-39feda294c78a735/out/current_target.txt
+
+/home/wsl/PNA/kvs/target/debug/deps/escargot-f867b493660d4016.d: /home/wsl/.cargo/registry/src/github.com-1ecc6299db9ec823/escargot-0.4.0/src/lib.rs /home/wsl/.cargo/registry/src/github.com-1ecc6299db9ec823/escargot-0.4.0/src/build.rs /home/wsl/.cargo/registry/src/github.com-1ecc6299db9ec823/escargot-0.4.0/src/cargo.rs /home/wsl/.cargo/registry/src/github.com-1ecc6299db9ec823/escargot-0.4.0/src/msg.rs /home/wsl/.cargo/registry/src/github.com-1ecc6299db9ec823/escargot-0.4.0/src/run.rs /home/wsl/.cargo/registry/src/github.com-1ecc6299db9ec823/escargot-0.4.0/src/error.rs /home/wsl/.cargo/registry/src/github.com-1ecc6299db9ec823/escargot-0.4.0/src/format/mod.rs /home/wsl/.cargo/registry/src/github.com-1ecc6299db9ec823/escargot-0.4.0/src/format/diagnostic.rs /home/wsl/PNA/kvs/target/debug/build/escargot-39feda294c78a735/out/current_target.txt
+
+/home/wsl/.cargo/registry/src/github.com-1ecc6299db9ec823/escargot-0.4.0/src/lib.rs:
+/home/wsl/.cargo/registry/src/github.com-1ecc6299db9ec823/escargot-0.4.0/src/build.rs:
+/home/wsl/.cargo/registry/src/github.com-1ecc6299db9ec823/escargot-0.4.0/src/cargo.rs:
+/home/wsl/.cargo/registry/src/github.com-1ecc6299db9ec823/escargot-0.4.0/src/msg.rs:
+/home/wsl/.cargo/registry/src/github.com-1ecc6299db9ec823/escargot-0.4.0/src/run.rs:
+/home/wsl/.cargo/registry/src/github.com-1ecc6299db9ec823/escargot-0.4.0/src/error.rs:
+/home/wsl/.cargo/registry/src/github.com-1ecc6299db9ec823/escargot-0.4.0/src/format/mod.rs:
+/home/wsl/.cargo/registry/src/github.com-1ecc6299db9ec823/escargot-0.4.0/src/format/diagnostic.rs:
+/home/wsl/PNA/kvs/target/debug/build/escargot-39feda294c78a735/out/current_target.txt:
+
+# env-dep:OUT_DIR=/home/wsl/PNA/kvs/target/debug/build/escargot-39feda294c78a735/out
