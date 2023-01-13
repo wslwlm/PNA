@@ -7,23 +7,16 @@ use structopt::StructOpt;
 #[structopt(name = env!("CARGO_PKG_NAME"), version = env!("CARGO_PKG_VERSION"), author = env!("CARGO_PKG_AUTHORS"))]
 pub struct Opt {
     #[structopt(subcommand)]
-    cmd: Option<Cmd>
+    cmd: Option<Cmd>,
 }
 
 #[derive(StructOpt, Debug, PartialEq)]
 pub enum Cmd {
-    Get {
-        key: String,
-    },
+    Get { key: String },
 
-    Set {
-        key: String,
-        value: String,
-    },
+    Set { key: String, value: String },
 
-    Rm {
-        key: String,
-    }
+    Rm { key: String },
 }
 
 fn main() {
@@ -35,16 +28,16 @@ fn main() {
     if opt.cmd.is_none() {
         process::exit(1);
     }
-    
+
     if let Some(command) = opt.cmd {
         match command {
             Cmd::Get { key } => {
                 let value = kvs.get(key);
                 println!("value: {:?}", value);
-            },
-            Cmd::Set { key, value} => {
+            }
+            Cmd::Set { key, value } => {
                 kvs.set(key, value);
-            },
+            }
             Cmd::Rm { key } => {
                 kvs.remove(key);
             }
@@ -71,7 +64,7 @@ fn main() {
     //             .arg(Arg::new("key"))
     //             .arg(Arg::new("value")),
     //     )
-    //     .subcommand(    
+    //     .subcommand(
     //             Command::new("rm")
     //             .about("remove key from kvs")
     //             .arg(Arg::new("key")),
