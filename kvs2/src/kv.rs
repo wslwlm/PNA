@@ -26,6 +26,8 @@ pub struct ValueOffset {
 
 pub type Result<T> = std::result::Result<T, Error>;
 
+const COMPACTION_LIMIT: u64 = 1 * 1024 * 1024;
+
 impl KvStore {
     pub fn new(path_buf: PathBuf) -> Self {
         KvStore {
@@ -117,6 +119,49 @@ impl KvStore {
         }
 
     }
+    
+    pub fn compaction(&mut self) -> Result<()> {
+        let log_path = self.path_buf.join(".log");
+        let f = fs::File::open(log_path.clone())?;
+        let mut reader = BufReader::new(f);
+
+        let temp_log_path = self.path_buf.join(".tmp");
+        let f = fs::OpenOptions::new().create(true).append(true).open(temp_log_path.clone())?;
+        let mut writer = BufWriter::new(f);
+        
+        for (key, value_offset) in self.index_map.iter_mut() {
+            reader.seek(SeekFrom::Start(value_offset.value_offset))?;
+
+            let mut key_sz_bytes = [0; 4];
+            reader.read_exact(&mut key_sz_bytes)?;
+            let key_sz = u32::from_be_bytes(key_sz_bytes);
+
+            let mut value_sz_bytes = [0; 4];
+            reader.read_exact(&mut value_sz_bytes)?;
+
+            let mut key_bytes = vec![0; key_sz as usize];
+            reader.read_exact(&mut key_bytes)?;
+            // println!("key bytes: {:?}", key_bytes);
+
+            let mut value_bytes = vec![0; value_offset.value_size as usize];
+            reader.read_exact(&mut value_bytes)?;
+            // println!("value bytes: {:?}", value_bytes);
+
+            let record_offset = writer.seek(SeekFrom::Current(0))?;
+            
+            writer.write_all(&key_sz_bytes)?;
+            writer.write_all(&value_sz_bytes)?;
+            writer.write_all(&key_bytes)?;
+            writer.write_all(&value_bytes)?;
+            writer.flush()?;
+
+            // update value offset
+            value_offset.value_offset = record_offset;
+        }
+
+        fs::rename(temp_log_path, log_path)?;
+        Ok(())
+    }
 
     pub fn set(&mut self, key: String, value: String) -> Result<()> {
         let log_path = self.path_buf.join(".log");
@@ -137,10 +182,16 @@ impl KvStore {
         writer.write_all(&serialized_key)?;
         writer.write_all(&serialized_value)?;
         writer.flush()?;
+        
+        let file_size = writer.seek(SeekFrom::End(0))?;
 
         self.index_map.insert(key, ValueOffset { 
             value_size: serialized_value.len() as u64, 
             value_offset: record_offset });
+
+        if file_size >= COMPACTION_LIMIT {
+            self.compaction()?;
+        }
         Ok(())
     }
 
@@ -168,4 +219,5 @@ impl KvStore {
         self.index_map.remove(&key);
         Ok(())
     }
+
 }
