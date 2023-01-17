@@ -7,6 +7,7 @@ use serde_json::Deserializer;
 use failure::{Fail};
 use std::io::{self, Seek, SeekFrom, Write, Read, BufReader, BufWriter};
 use std::path::{Path, PathBuf};
+use super::KvsEngine;
 
 const COMPACTION_LIMIT: u64 = 1024 * 1024;
 
@@ -95,72 +96,6 @@ impl KvStore {
         )
     }
 
-    /// Set the value of a string key to string
-    pub fn set(&mut self, key: String, value: String) -> Result<()> {
-        let cmd = serde_json::to_vec(&Command::Set { key: key.clone(), value })?;
-        let pos = self.writer.pos;
-        // TODO(wsl): How to guarantee the atomicity of writing?
-        let len = self.writer.write(&cmd)?;
-        self.writer.flush()?;
-
-        // old command log redundant
-        if let Some(old_cmd) = self.index_map.insert(key, CommandPos { gen: self.curr_gen, pos, len: len as u64 }) {
-            self.uncompacted += old_cmd.len;
-        }
-
-        if self.uncompacted > COMPACTION_LIMIT {
-            self.compaction()?;
-        }
-        Ok(())
-    }
-
-    /// remove the value of the string key
-    pub fn remove(&mut self, key: String) -> Result<()> {
-        // only existent key need to remove
-        if let Some(old_cmd) = self.index_map.get(&key) {
-            let cmd = serde_json::to_vec(&Command::Remove { key: key.clone() })?;
-            let len = self.writer.write(&cmd)?;
-            self.writer.flush()?;
-
-            self.uncompacted += old_cmd.len + (len as u64);
-            self.index_map.remove(&key);
-
-            if self.uncompacted > COMPACTION_LIMIT {
-                self.compaction()?;
-            }
-            Ok(())
-        } else {
-            Err(MyError::KeyNotFound)
-        }
-    }
-
-    /// Get the value of the string key
-    pub fn get(&mut self, key: String) -> Result<Option<String>> {
-        if let Some(cmd_pos) = self.index_map.get(&key) {
-            if let Some(reader) = self.reader_map.get_mut(&cmd_pos.gen) {
-                // move reader to log pointer and read command
-                reader.seek(SeekFrom::Start(cmd_pos.pos))?;
-                let mut buf = vec![0; cmd_pos.len as usize];
-                reader.read_exact(&mut buf)?;
-                let cmd: Command = serde_json::from_slice(&buf)?;
-                // println!("cmd: {}", cmd);
-                match cmd {
-                    Command::Set {key: _, value} => {
-                        Ok(Some(value))
-                    },
-                    Command::Remove { key: _ } => {
-                        Ok(None)
-                    }
-                }
-            } else {
-                Err(MyError::ReaderNotFound)
-            }
-        } else {
-            Ok(None)
-        }
-        // Ok(None)
-    }
-
     fn compaction(&mut self) -> Result<()> {
         let dir = self.path.as_path();
         let temp_gen = self.curr_gen + 1;
@@ -211,6 +146,74 @@ impl KvStore {
 
         self.uncompacted = 0;
         Ok(())
+    }
+}
+
+impl KvsEngine for KvStore {
+     /// Set the value of a string key to string
+    fn set(&mut self, key: String, value: String) -> Result<()> {
+        let cmd = serde_json::to_vec(&Command::Set { key: key.clone(), value })?;
+        let pos = self.writer.pos;
+        // TODO(wsl): How to guarantee the atomicity of writing?
+        let len = self.writer.write(&cmd)?;
+        self.writer.flush()?;
+
+        // old command log redundant
+        if let Some(old_cmd) = self.index_map.insert(key, CommandPos { gen: self.curr_gen, pos, len: len as u64 }) {
+            self.uncompacted += old_cmd.len;
+        }
+
+        if self.uncompacted > COMPACTION_LIMIT {
+            self.compaction()?;
+        }
+        Ok(())
+    }
+
+    /// remove the value of the string key
+    fn remove(&mut self, key: String) -> Result<()> {
+        // only existent key need to remove
+        if let Some(old_cmd) = self.index_map.get(&key) {
+            let cmd = serde_json::to_vec(&Command::Remove { key: key.clone() })?;
+            let len = self.writer.write(&cmd)?;
+            self.writer.flush()?;
+
+            self.uncompacted += old_cmd.len + (len as u64);
+            self.index_map.remove(&key);
+
+            if self.uncompacted > COMPACTION_LIMIT {
+                self.compaction()?;
+            }
+            Ok(())
+        } else {
+            Err(MyError::KeyNotFound)
+        }
+    }
+
+    /// Get the value of the string key
+    fn get(&mut self, key: String) -> Result<Option<String>> {
+        if let Some(cmd_pos) = self.index_map.get(&key) {
+            if let Some(reader) = self.reader_map.get_mut(&cmd_pos.gen) {
+                // move reader to log pointer and read command
+                reader.seek(SeekFrom::Start(cmd_pos.pos))?;
+                let mut buf = vec![0; cmd_pos.len as usize];
+                reader.read_exact(&mut buf)?;
+                let cmd: Command = serde_json::from_slice(&buf)?;
+                // println!("cmd: {}", cmd);
+                match cmd {
+                    Command::Set {key: _, value} => {
+                        Ok(Some(value))
+                    },
+                    Command::Remove { key: _ } => {
+                        Ok(None)
+                    }
+                }
+            } else {
+                Err(MyError::ReaderNotFound)
+            }
+        } else {
+            Ok(None)
+        }
+        // Ok(None)
     }
 }
 
