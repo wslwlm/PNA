@@ -1,7 +1,8 @@
-use kvs::Result;
-use std::{env, process, net::TcpStream};
+use kvs::{Result, Request, Response, Protocol};
+use std::{env, process, net::TcpStream, io::BufWriter};
 use structopt::StructOpt;
-use std::io::Write;
+use std::io::{Read, Write};
+use serde::{Serialize, Deserialize};
 
 #[derive(StructOpt, Debug, PartialEq)]
 #[structopt(name = env!("CARGO_PKG_NAME"), version = env!("CARGO_PKG_VERSION"), author = env!("CARGO_PKG_AUTHORS"))]
@@ -52,7 +53,12 @@ fn main() -> Result<()> {
             Cmd::Get { key, addr } => {
                 println!("key: {}, addr: {}", key, addr);
                 let mut stream = TcpStream::connect(addr)?;
-                stream.write(key.as_bytes())?;
+                let mut protocol = Protocol::with_stream(stream)?;
+                protocol.send_messsage(&Request::Get {
+                    key,
+                })?;
+                let resp: Response = protocol.read_message::<Response>()?;
+                println!("response: {}", resp);
             },
             Cmd::Set { key, value, addr } => {
                 println!("key: {}, value: {}, addr: {}", key, value, addr);

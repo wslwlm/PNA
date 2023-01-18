@@ -1,9 +1,9 @@
-use kvs::{KvStore, KvsEngine, Result};
+use kvs::{KvStore, KvsEngine, Result, Request, Response, Protocol};
 use std::{env, process, net::TcpListener};
 use structopt::StructOpt;
 use log::{debug, error, log_enabled, info, Level};
 use env_logger::{Env};
-use std::io::Read;
+use std::io::{Read, Write};
 
 #[derive(StructOpt, Debug, PartialEq)]
 #[structopt(name = env!("CARGO_PKG_NAME"), version = env!("CARGO_PKG_VERSION"), author = env!("CARGO_PKG_AUTHORS"))]
@@ -43,9 +43,21 @@ fn main() -> Result<()> {
         match stream {
             Ok(mut stream) => {
                 /* handle connection */
-                let mut buf = vec![0; 128];
-                stream.read(&mut buf)?;
-                println!("buf: {:?}", buf);
+                let mut protocol = Protocol::with_stream(stream)?;
+                let req:Request = protocol.read_message::<Request>()?;
+                println!("request: {}", req);
+
+                match req {
+                    Request::Get{key} => {
+                        protocol.send_messsage(&Response::Get {
+                            value: key,
+                            success: 0,
+                            err_msg: String::from(""),
+                        })?;
+                    },
+                    Request::Set { key, value } => {},
+                    Request::Remove { key } => {},
+                }
             },
             Err(e) => {
                 /* connection error */
