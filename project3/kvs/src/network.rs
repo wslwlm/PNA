@@ -1,14 +1,16 @@
 use std::convert::From;
 use std::io::{self, Read, Write, BufReader};
 use std::fmt::{self};
-use std::iter::Successors;
-use std::net::TcpStream;
+use std::net::{TcpStream, TcpListener, SocketAddr, ToSocketAddrs};
+use failure::Fail;
 use byteorder::{NetworkEndian, ReadBytesExt, WriteBytesExt};
+use serde; 
+use crate::{KvError, Result};
 
 /// traits for something that can convert to `&[u8]`
 pub trait Serialize {
     /// Serialize to a `write`able buffer
-    fn serialize(&self, buf: &mut impl Write) -> io::Result<usize>;
+    fn serialize(&self, buf: &mut impl Write) -> Result<usize>;
 }
 
 /// traits for something that can be converted from `[u8]`
@@ -17,7 +19,7 @@ pub trait Deserialize {
     type Output;
 
     /// Deserialize from the `Read`able buffer 
-    fn deserialize(buf: &mut impl Read) -> io::Result<Self::Output>;
+    fn deserialize(buf: &mut impl Read) -> Result<Self::Output>;
 }
 
 /// Request object (client -> server)
@@ -37,7 +39,7 @@ impl From<&Request> for u8 {
     }
 }
 
-fn encode_string(buf: &mut impl Write, message: &String) -> io::Result<usize> {
+fn encode_string(buf: &mut impl Write, message: &String) -> Result<usize> {
     let message_bytes = message.as_bytes();
     buf.write_u32::<NetworkEndian>((message_bytes.len()) as u32)?;
     buf.write_all(message_bytes)?;
@@ -46,7 +48,7 @@ fn encode_string(buf: &mut impl Write, message: &String) -> io::Result<usize> {
 
 impl Serialize for Request {
     /// Serialize Request to bytes array
-    fn serialize(&self, buf: &mut impl Write) -> io::Result<usize> {
+    fn serialize(&self, buf: &mut impl Write) -> Result<usize> {
         buf.write_u8(self.into())?;
         let mut bytes_written: usize = 1;
         match self {
@@ -65,17 +67,17 @@ impl Serialize for Request {
     }
 }
 
-fn decode_string(buf: &mut impl Read) -> io::Result<String> {
+fn decode_string(buf: &mut impl Read) -> Result<String> {
     let key_size = buf.read_u32::<NetworkEndian>()?;
     let mut key_buf = vec![0; key_size as usize];
     buf.read_exact(&mut key_buf)?;
-    String::from_utf8(key_buf).map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Invalid utf8"))
+    String::from_utf8(key_buf).map_err(|_| KvError::Io(io::Error::new(io::ErrorKind::InvalidData, "Invalid utf8")))
 }
 
 impl Deserialize for Request {
     type Output = Request;
 
-    fn deserialize(buf: &mut impl Read) -> io::Result<Self::Output> {
+    fn deserialize(buf: &mut impl Read) -> Result<Self::Output> {
         match buf.read_u8()? {
             1 => {
                 // Deserialize to Get Request
@@ -92,7 +94,7 @@ impl Deserialize for Request {
                 let key = decode_string(buf)?;
                 Ok(Request::Remove { key })
             },
-            _ => { Err(io::Error::new(io::ErrorKind::InvalidData, "invalid data"))}
+            _ => { Err(KvError::Io(io::Error::new(io::ErrorKind::InvalidData, "invalid data")))}
         }
     }
 }
@@ -108,92 +110,68 @@ impl fmt::Display for Request {
 }
 
 // TODO(wsl): how to represent the error
-pub enum Response {
-    Get {
-        value: String,
-        success: u8, 
-        err_msg: String,
-    }, 
+#[derive(serde::Serialize, serde::Deserialize)]
+pub enum GetResponse {
+    Ok(Option<String>),
+    Err(String),
+}
 
-    Set {
-        success: u8,
-        err_msg: String,
-    },
-
-    Remove {
-        success: u8,
-        err_msg: String,
+impl Serialize for GetResponse {
+    fn serialize(&self, buf: &mut impl Write) -> Result<usize> {
+        serde_json::to_writer(buf, self)?;
+        Ok(0)
     }
 }
 
-impl From<&Response> for u8 {
-    fn from(value: &Response) -> Self {
-        match value {
-            Response::Get { .. } => 1,
-            Response::Set { .. } => 2,
-            Response::Remove { .. } => 3,
-        }
+impl Deserialize for GetResponse {
+    type Output = GetResponse;
+
+    fn deserialize(buf: &mut impl Read) -> Result<Self::Output> {
+        Ok(serde_json::from_reader(buf)?)
     }
 }
 
-impl Serialize for Response {
-    fn serialize(&self, buf: &mut impl Write) -> io::Result<usize> {
-        buf.write_u8(self.into())?;
-        let mut bytes_written: usize = 1;
-        match self {
-            Response::Get { value, success, err_msg } => {
-                bytes_written += encode_string(buf, value)?;
-                buf.write_u8(*success)?;
-                bytes_written += encode_string(buf, err_msg)?;
-            },
-            Response::Set { success, err_msg } => {
-                buf.write_u8(*success)?;
-                bytes_written += encode_string(buf, err_msg)?;
-            },
-            Response::Remove { success, err_msg } => {
-                buf.write_u8(*success)?;
-                bytes_written += encode_string(buf, err_msg)?;
-            }
-        }
-        Ok(bytes_written)
+#[derive(serde::Serialize, serde::Deserialize)]
+pub enum SetResponse {
+    Ok,
+    Err(String),
+}
+
+impl Serialize for SetResponse {
+    fn serialize(&self, buf: &mut impl Write) -> Result<usize> {
+        serde_json::to_writer(buf, self)?;
+        Ok(0)
     }
 }
 
-impl Deserialize for Response {
-    type Output = Response;
+impl Deserialize for SetResponse {
+    type Output = SetResponse;
 
-    fn deserialize(buf: &mut impl Read) -> io::Result<Self::Output> {
-        match buf.read_u8()? {
-            1 => {
-                let value = decode_string(buf)?;
-                let success = buf.read_u8()?;
-                let err_msg = decode_string(buf)?;
-                Ok(Response::Get { value, success, err_msg, })
-            },
-            2 => {
-                let success = buf.read_u8()?;
-                let err_msg = decode_string(buf)?;
-                Ok(Response::Set { success, err_msg, })
-            },
-            3 => {
-                let success = buf.read_u8()?;
-                let err_msg = decode_string(buf)?;
-                Ok(Response::Remove { success, err_msg, })
-            }, 
-            _ => { Err(io::Error::new(io::ErrorKind::InvalidData, "invalid data"))}
-        }
+    fn deserialize(buf: &mut impl Read) -> Result<Self::Output> {
+        Ok(serde_json::from_reader(buf)?)
     }
 }
 
-impl fmt::Display for Response {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Response::Get { value, success, err_msg } => write!(f, "Response value: {:?} success: {:?} message: {}", value, success, err_msg),
-            Response::Set { success, err_msg } => write!(f, "Response success: {:?} message: {}", success, err_msg),
-            Response::Remove { success, err_msg } => write!(f, "Response success: {:?} message: {}", success, err_msg),
-        }
+#[derive(serde::Serialize, serde::Deserialize)]
+pub enum RemoveResponse {
+    Ok, 
+    Err(String)
+}
+
+impl Serialize for RemoveResponse {
+    fn serialize(&self, buf: &mut impl Write) -> Result<usize> {
+        serde_json::to_writer(buf, self)?;
+        Ok(0)
     }
 }
+
+impl Deserialize for RemoveResponse {
+    type Output = RemoveResponse;
+
+    fn deserialize(buf: &mut impl Read) -> Result<Self::Output> {
+        Ok(serde_json::from_reader(buf)?)
+    }
+} 
 
 /// Abstracted protocol wraps a TcpStream
 pub struct Protocol {
@@ -202,21 +180,29 @@ pub struct Protocol {
 }
 
 impl Protocol {
-    pub fn with_stream(stream: TcpStream) -> io::Result<Self> {
-        Ok (
-        Protocol{ 
+    pub fn with_stream(stream: TcpStream) -> Result<Self> {
+        Ok (Protocol{ 
             reader: BufReader::new(stream.try_clone()?),
             stream,
         })
     }
 
-    pub fn send_messsage(&mut self, message: &impl Serialize) -> io::Result<usize> {
+    pub fn connect<A: ToSocketAddrs>(socket_addr: A) -> Result<Self> {
+        let stream = TcpStream::connect(socket_addr)?;
+        Self::with_stream(stream)
+    }
+
+    pub fn bind<A: ToSocketAddrs>(socket_addr: A) -> Result<TcpListener> {
+        Ok(TcpListener::bind(socket_addr)?)
+    }
+
+    pub fn send_messsage(&mut self, message: &impl Serialize) -> Result<usize> {
         let length = message.serialize(&mut self.stream)?;
-        self.stream.flush();
+        self.stream.flush()?;
         Ok(length)
     } 
 
-    pub fn read_message<T: Deserialize>(&mut self) -> io::Result<T::Output> {
+    pub fn read_message<T: Deserialize>(&mut self) -> Result<T::Output> {
         T::deserialize(&mut self.reader)
     }
 }

@@ -1,8 +1,8 @@
-use kvs::{Result, Request, Response, Protocol};
-use std::{env, process, net::TcpStream, io::BufWriter};
+use kvs::{Client, Result};
+use std::{env, process};
 use structopt::StructOpt;
 use std::io::{Read, Write};
-use serde::{Serialize, Deserialize};
+use env_logger::{Env};
 
 #[derive(StructOpt, Debug, PartialEq)]
 #[structopt(name = env!("CARGO_PKG_NAME"), version = env!("CARGO_PKG_VERSION"), author = env!("CARGO_PKG_AUTHORS"))]
@@ -41,8 +41,10 @@ pub enum Cmd {
 }
 
 fn main() -> Result<()> {
+    env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
+
     let opt = Opt::from_args();
-    println!("args: {:?}", opt);
+    // println!("args: {:?}", opt);
 
     if opt.cmd.is_none() {
         process::exit(1);
@@ -51,20 +53,23 @@ fn main() -> Result<()> {
     if let Some(command) = opt.cmd {
         match command {
             Cmd::Get { key, addr } => {
-                println!("key: {}, addr: {}", key, addr);
-                let mut stream = TcpStream::connect(addr)?;
-                let mut protocol = Protocol::with_stream(stream)?;
-                protocol.send_messsage(&Request::Get {
-                    key,
-                })?;
-                let resp: Response = protocol.read_message::<Response>()?;
-                println!("response: {}", resp);
+                // info!("key: {}, addr: {}", key, addr);
+                let mut client = Client::connect(addr)?;
+                if let Some(value) = client.get(key)? {
+                    println!("{}", value);
+                } else {
+                    println!("Key not found");
+                }
             },
             Cmd::Set { key, value, addr } => {
-                println!("key: {}, value: {}, addr: {}", key, value, addr);
+                // info!("key: {}, value: {}, addr: {}", key, value, addr);
+                let mut client = Client::connect(addr)?;
+                client.set(key, value)?;
             },
             Cmd::Rm { key , addr} => {
-                println!("key: {}, addr: {}", key, addr);
+                // info!("key: {}, addr: {}", key, addr);
+                let mut client = Client::connect(addr)?;
+                client.remove(key)?;
             }
         }
     }

@@ -2,45 +2,15 @@ use std::fmt;
 use std::fs::{self, OpenOptions};
 use std::fs::File;
 use std::collections::HashMap;
+use std::string::FromUtf8Error;
 use serde::{Serialize, Deserialize};
 use serde_json::Deserializer;
 use failure::{Fail};
 use std::io::{self, Seek, SeekFrom, Write, Read, BufReader, BufWriter};
 use std::path::{Path, PathBuf};
-use super::KvsEngine;
+use crate::{KvsEngine, KvError, Result};
 
 const COMPACTION_LIMIT: u64 = 1024 * 1024;
-
-#[derive(Fail, Debug)]
-pub enum MyError {
-    #[fail(display = "{}", _0)]
-    Io(#[cause] io::Error),
-    
-    #[fail(display = "{}", _0)]
-    Se(#[cause] serde_json::Error),
-
-    #[fail(display = "Key not found")]
-    KeyNotFound,
-
-    #[fail(display = "Reader not found")]
-    ReaderNotFound,
-}
-
-/// io::Error -> MyError
-impl From<io::Error> for MyError {
-    fn from(error: io::Error) -> Self {
-        MyError::Io(error)
-    }
-}
-
-/// serde_jsonL::Error -> MyError
-impl From<serde_json::Error> for MyError {
-    fn from(error: serde_json::Error) -> Self {
-        MyError::Se(error)
-    }
-}
-
-pub type Result<T> = std::result::Result<T, MyError>;
 
 pub struct KvStore {
     path: PathBuf,
@@ -58,7 +28,7 @@ pub struct KvStore {
 
 impl KvStore {
     /// open a kv-store with a given directory
-    pub fn open(dir: impl Into<PathBuf>) -> Result<KvStore> {
+    pub fn open(dir: impl Into<PathBuf>) -> Result<impl KvsEngine> {
         let dir_buf = dir.into();
         let path = dir_buf.as_path();
         let gen_list: Vec<u64> = sorted_gen_list(path)?;
@@ -118,7 +88,7 @@ impl KvStore {
             } else {
                 // println!("tempgen: {} gen: {}", temp_gen, cmd_pos.gen);
                 // println!("index map: {:?} reader_map: {:?}", self.index_map, self.reader_map.keys());
-                return Err(MyError::ReaderNotFound);
+                return Err(KvError::ReaderNotFound);
             }
         }
 
@@ -185,7 +155,7 @@ impl KvsEngine for KvStore {
             }
             Ok(())
         } else {
-            Err(MyError::KeyNotFound)
+            Err(KvError::KeyNotFound)
         }
     }
 
@@ -208,7 +178,7 @@ impl KvsEngine for KvStore {
                     }
                 }
             } else {
-                Err(MyError::ReaderNotFound)
+                Err(KvError::ReaderNotFound)
             }
         } else {
             Ok(None)

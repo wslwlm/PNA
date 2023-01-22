@@ -1,9 +1,8 @@
-use kvs::{KvStore, KvsEngine, Result, Request, Response, Protocol};
-use std::{env, process, net::TcpListener};
+use kvs::{KvStore, SledEngine, KvsEngine, Result, KvError, Server};
+use std::{fs, env};
 use structopt::StructOpt;
-use log::{debug, error, log_enabled, info, Level};
+use log::{info};
 use env_logger::{Env};
-use std::io::{Read, Write};
 
 #[derive(StructOpt, Debug, PartialEq)]
 #[structopt(name = env!("CARGO_PKG_NAME"), version = env!("CARGO_PKG_VERSION"), author = env!("CARGO_PKG_AUTHORS"))]
@@ -17,6 +16,22 @@ pub struct Opt {
     engine: String,
 }
 
+fn current_engine() -> Result<Option<String>> {
+    let engine_file = env::current_dir()?.join("engine");
+    if !engine_file.exists() {
+        return Ok(None);
+    }
+
+    let engine = fs::read_to_string(engine_file)?;
+    Ok(Some(engine))
+}
+
+
+fn run_with_engine<E: KvsEngine>(engine: E, addr: String) -> Result<()> {
+    let mut server = Server::new(engine)?;
+    server.run(addr)?;
+    Ok(())
+}
 
 fn main() -> Result<()> {
     // set the default log_level -> Level::Info
@@ -37,32 +52,21 @@ fn main() -> Result<()> {
             env!("CARGO_PKG_VERSION"), 
             addr, engine);
 
-    let listener = TcpListener::bind(addr)?;
-
-    for stream in listener.incoming() {
-        match stream {
-            Ok(mut stream) => {
-                /* handle connection */
-                let mut protocol = Protocol::with_stream(stream)?;
-                let req:Request = protocol.read_message::<Request>()?;
-                println!("request: {}", req);
-
-                match req {
-                    Request::Get{key} => {
-                        protocol.send_messsage(&Response::Get {
-                            value: key,
-                            success: 0,
-                            err_msg: String::from(""),
-                        })?;
-                    },
-                    Request::Set { key, value } => {},
-                    Request::Remove { key } => {},
-                }
-            },
-            Err(e) => {
-                /* connection error */
-            }
+    if let Some(curr_engine) = current_engine()? {
+        if curr_engine != engine {
+            return Err(KvError::WrongEngine);
         }
+    }
+
+    let engine_file = env::current_dir()?.join("engine");
+    fs::write(engine_file, format!("{}", engine))?;
+
+    if engine == "kvs" {
+        run_with_engine(KvStore::open(env::current_dir()?)?, addr)?;
+    } else if engine == "sled" {
+        run_with_engine(SledEngine::open(env::current_dir()?)?, addr)?;
+    } else {
+        return Err(KvError::WrongEngine);
     }
     
     Ok(())
