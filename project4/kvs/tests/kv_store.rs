@@ -131,7 +131,7 @@ fn compaction() -> Result<()> {
 fn concurrent_set() -> Result<()> {
     let temp_dir = TempDir::new().expect("unable to create temporary working directory");
     // let store = KvStore::open(temp_dir.path())?;
-    let store = KvStoe::open(temp_dir.path())?;
+    let store = KvStore::open(temp_dir.path())?;
     let barrier = Arc::new(Barrier::new(1001));
     for i in 0..1000 {
         let store = store.clone();
@@ -163,14 +163,14 @@ fn concurrent_set() -> Result<()> {
 fn concurrent_get() -> Result<()> {
     let temp_dir = TempDir::new().expect("unable to create temporary working directory");
     let store = KvStore::open(temp_dir.path())?;
-    for i in 0..100 {
+    for i in 0..1000 {
         store
             .set(format!("key{}", i), format!("value{}", i))
             .unwrap();
     }
 
     let mut handles = Vec::new();
-    for thread_id in 0..100 {
+    for thread_id in 0..1000 {
         let store = store.clone();
         let handle = thread::spawn(move || {
             for i in 0..100 {

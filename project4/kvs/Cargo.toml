@@ -17,6 +17,7 @@ panic-control = "0.1.4"
 
 [dependencies]
 byteorder = "1.4.3"
+dashmap = "5.4.0"
 env_logger = "0.10.0"
 failure = "0.1.8"
 failure_derive = "0.1.8"

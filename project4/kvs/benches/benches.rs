@@ -125,7 +125,7 @@ fn write_rayon_kvstore(c: &mut Criterion) {
         env_logger::Builder::from_env(Env::default().default_filter_or("warn")).init();
     });
 
-    let mut group = c.benchmark_group("write_queued_kvstore");
+    let mut group = c.benchmark_group("write_rayon_kvstore");
     for i in &vec![1, 2, 4, 8, 16] {
         group.bench_with_input(format!("kvs_{}", i), i, |b, &i| {
             let temp_dir = TempDir::new().unwrap();
@@ -245,7 +245,7 @@ fn read_queued_kvstore(c: &mut Criterion) {
             // previous set the key/value pairs 
             let store = KvStore::open(temp_dir.path()).unwrap();
             for j in 0..entries_len {
-                if let Err(e) = store.set(format!("key{}", j), "value".to_string()) {
+                if let Err(e) = store.set(format!("key{}", j), format!("value{}", j)) {
                     warn!("store previous set value error: {:?}", e);
                 }
             }
@@ -269,7 +269,7 @@ fn read_queued_kvstore(c: &mut Criterion) {
                             Ok(mut client) => {
                                 match client.get(format!("key{}", j)) {
                                     Ok(value) => {
-                                        assert_eq!(value, Some("value".to_string()));
+                                        assert_eq!(value, Some(format!("value{}", j)));
                                     },
                                     Err(e) => warn!("client set error: {:?}", e)
                                 }
@@ -302,7 +302,7 @@ fn read_queued_kvstore(c: &mut Criterion) {
             // previous set the key/value pairs 
             let store = SledEngine::open(temp_dir.path()).unwrap();
             for j in 0..entries_len {
-                if let Err(e) = store.set(format!("key{}", j), "value".to_string()) {
+                if let Err(e) = store.set(format!("key{}", j), format!("value{}", j)) {
                     warn!("store previous set value error: {:?}", e);
                 }
             }
@@ -326,7 +326,7 @@ fn read_queued_kvstore(c: &mut Criterion) {
                             Ok(mut client) => {
                                 match client.get(format!("key{}", j)) {
                                     Ok(value) => {
-                                        assert_eq!(value, Some("value".to_string()));
+                                        assert_eq!(value, Some(format!("value{}", j)));
                                     },
                                     Err(e) => warn!("client set error: {:?}", e)
                                 }
@@ -357,8 +357,8 @@ fn read_rayon_kvstore(c: &mut Criterion) {
         env_logger::Builder::from_env(Env::default().default_filter_or("warn")).init();
     });
 
-    let mut group = c.benchmark_group("read_queued_kvstore");
-    for i in &vec![1, 2, 4, 8, 16] {
+    let mut group = c.benchmark_group("read_rayon_kvstore");
+    for i in &vec![1, 2, 4, 8, 16, 32] {
         group.bench_with_input(format!("kvs_{}", i), i, |b, &i| {
             let temp_dir = TempDir::new().unwrap();
             let addr = "127.0.0.1:4000";
@@ -369,7 +369,7 @@ fn read_rayon_kvstore(c: &mut Criterion) {
             // previous set the key/value pairs 
             let store = KvStore::open(temp_dir.path()).unwrap();
             for j in 0..entries_len {
-                if let Err(e) = store.set(format!("key{}", j), "value".to_string()) {
+                if let Err(e) = store.set(format!("key{}", j), format!("value{}", j)) {
                     warn!("store previous set value error: {:?}", e);
                 }
             }
@@ -393,7 +393,7 @@ fn read_rayon_kvstore(c: &mut Criterion) {
                             Ok(mut client) => {
                                 match client.get(format!("key{}", j)) {
                                     Ok(value) => {
-                                        assert_eq!(value, Some("value".to_string()));
+                                        assert_eq!(value, Some(format!("value{}", j)));
                                     },
                                     Err(e) => warn!("client set error: {:?}", e)
                                 }
@@ -426,7 +426,7 @@ fn read_rayon_kvstore(c: &mut Criterion) {
             // previous set the key/value pairs 
             let store = SledEngine::open(temp_dir.path()).unwrap();
             for j in 0..entries_len {
-                if let Err(e) = store.set(format!("key{}", j), "value".to_string()) {
+                if let Err(e) = store.set(format!("key{}", j), format!("value{}", j)) {
                     warn!("store previous set value error: {:?}", e);
                 }
             }
@@ -450,7 +450,7 @@ fn read_rayon_kvstore(c: &mut Criterion) {
                             Ok(mut client) => {
                                 match client.get(format!("key{}", j)) {
                                     Ok(value) => {
-                                        assert_eq!(value, Some("value".to_string()));
+                                        assert_eq!(value, Some(format!("value{}", j)));
                                     },
                                     Err(e) => warn!("client set error: {:?}", e)
                                 }
@@ -478,6 +478,7 @@ fn read_rayon_kvstore(c: &mut Criterion) {
 
 criterion_group!(
     name = benches;
-    config = Criterion::default().sample_size(10);
-    targets = write_queued_kvstore, write_rayon_kvstore, read_queued_kvstore, read_rayon_kvstore);
+    config = Criterion::default().sample_size(20);
+    // targets = write_queued_kvstore, write_rayon_kvstore, read_queued_kvstore, read_rayon_kvstore);
+    targets = read_rayon_kvstore);
 criterion_main!(benches);

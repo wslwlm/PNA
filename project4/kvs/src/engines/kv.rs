@@ -1,4 +1,6 @@
-use std::fmt;
+use std::borrow::{BorrowMut, Borrow};
+use std::hash::Hash;
+use std::{fmt, clone};
 use std::fs::{self, OpenOptions};
 use std::fs::File;
 use std::collections::HashMap;
@@ -9,36 +11,50 @@ use failure::{Fail};
 use std::io::{self, Seek, SeekFrom, Write, Read, BufReader, BufWriter};
 use std::path::{Path, PathBuf};
 use crate::{KvsEngine, KvError, Result};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, atomic::{AtomicU64}};
+use dashmap::DashMap;
+use std::cell::{RefCell, RefMut};
+use std::sync::atomic::Ordering;
+use log::info;
 
-const COMPACTION_LIMIT: u64 = 1024 * 1024;
+const COMPACTION_LIMIT: u64 = 100;
+
+// #[derive(Clone)]
+// pub struct KvStore(Arc<RwLock<ShardKvStore>>);
+
+// pub struct ShardKvStore {
+//     path: PathBuf,
+//     // current log number
+//     curr_gen: u64,
+//     // map string key -> command position
+//     index_map: HashMap<String, CommandPos>,
+//     // map log number -> log file reader
+//     reader_map: Arc<Mutex<HashMap<u64, BufReaderWithPos<File>>>>,
+//     // current log file writer
+//     writer: BufWriterWithPos<File>,
+//     // redundant bytes number
+//     uncompacted: u64,
+// }
 
 #[derive(Clone)]
-pub struct KvStore(Arc<Mutex<ShardKvStore>>);
-
-pub struct ShardKvStore {
-    path: PathBuf,
-    // current log number
-    curr_gen: u64,
-    // map string key -> command position
-    index_map: HashMap<String, CommandPos>,
-    // map log number -> log file reader
-    reader_map: HashMap<u64, BufReaderWithPos<File>>,
-    // current log file writer
-    writer: BufWriterWithPos<File>,
-    // redundant bytes number
-    uncompacted: u64,
+pub struct KvStore {
+    // concurrent map string key -> command pos
+    index_map: Arc<DashMap<String, CommandPos>>,
+    // kv writer
+    kv_writer: Arc<Mutex<KvWriter>>,
+    // kv reader
+    kv_reader: KvReader,
 }
 
-impl ShardKvStore {
+impl KvStore {
     /// open a kv-store with a given directory
     pub fn open(dir: impl Into<PathBuf>) -> Result<Self> {
-        let dir_buf = dir.into();
+        let dir_buf = Arc::new(dir.into());
         let path = dir_buf.as_path();
         let gen_list: Vec<u64> = sorted_gen_list(path)?;
 
         let mut reader_map: HashMap<u64, BufReaderWithPos<File>> = HashMap::new();
-        let mut index_map: HashMap<String, CommandPos> = HashMap::new();
+        let mut index_map = Arc::new(DashMap::new());
         
         let mut curr_gen = 0;
         let mut uncompacted = 0;
@@ -49,6 +65,7 @@ impl ShardKvStore {
             reader_map.insert(gen, reader);
             curr_gen = gen;
         }
+        let first_gen = *gen_list.first().unwrap_or(&0);
 
         // every open create a new log file
         // TODO(wsl): BufReader & BufWriter -> the same file (cursor not share)
@@ -57,21 +74,66 @@ impl ShardKvStore {
         let f = File::open(log_path(path, curr_gen))?;
         let reader = BufReaderWithPos::new(f);
         reader_map.insert(curr_gen, reader);
-    
+
+        let safe_point = Arc::new(AtomicU64::new(first_gen));
+
         Ok(
-            ShardKvStore { 
-                path: dir_buf, 
-                curr_gen,
-                index_map,
-                reader_map,
-                writer,
-                uncompacted,
+            KvStore { 
+                index_map: index_map.clone(),
+                kv_writer: Arc::new(Mutex::new(KvWriter {
+                    path: dir_buf.clone(),
+                    curr_gen,
+                    safe_point: safe_point.clone(),
+                    writer,
+                    index_map: index_map.clone(),
+                    reader_map,
+                    uncompacted,
+                })),
+                kv_reader: KvReader { 
+                    path: dir_buf,
+                    safe_point, 
+                    index_map,
+                    reader_map: RefCell::new(HashMap::new())
+                },
             }
         )
     }
+    
+}
 
+impl KvsEngine for KvStore {
+    fn set(&self, key: String, value: String) -> Result<()> {
+        self.kv_writer.lock().unwrap().set(key, value)
+    }
+
+    fn remove(&self, key: String) -> Result<()> {
+        self.kv_writer.lock().unwrap().remove(key)
+    }
+
+    fn get(&self, key: String) -> Result<Option<String>> {
+        self.kv_reader.get(key)
+    }
+}
+
+pub struct KvWriter {
+    path: Arc<PathBuf>,
+    // current log number
+    curr_gen: u64,
+    // safe point to sync the compaction gen number
+    safe_point: Arc<AtomicU64>,
+    // current log file writer
+    writer: BufWriterWithPos<File>,
+    // concurrent map string key -> command pos
+    index_map: Arc<DashMap<String, CommandPos>>,
+    // map u64 -> buf reader
+    reader_map: HashMap<u64, BufReaderWithPos<File>>,
+    // redundant bytes number
+    uncompacted: u64,
+}
+
+impl KvWriter {
     /// Set the value of a string key to string
-    fn set(&mut self, key: String, value: String) -> Result<()> {
+    pub fn set(&mut self, key: String, value: String) -> Result<()> {
         let cmd = serde_json::to_vec(&Command::Set { key: key.clone(), value })?;
         let pos = self.writer.pos;
         // TODO(wsl): How to guarantee the atomicity of writing?
@@ -90,14 +152,14 @@ impl ShardKvStore {
     }
 
     /// remove the value of the string key
-    fn remove(&mut self, key: String) -> Result<()> {
+    pub fn remove(&mut self, key: String) -> Result<()> {
         // only existent key need to remove
-        if let Some(old_cmd) = self.index_map.get(&key) {
+        if self.index_map.contains_key(&key) {
             let cmd = serde_json::to_vec(&Command::Remove { key: key.clone() })?;
             let len = self.writer.write(&cmd)?;
             self.writer.flush()?;
 
-            self.uncompacted += old_cmd.len + (len as u64);
+            self.uncompacted += self.index_map.get(&key).map(|e| e.value().len).unwrap_or(0) + (len as u64);
             self.index_map.remove(&key);
 
             if self.uncompacted > COMPACTION_LIMIT {
@@ -109,40 +171,14 @@ impl ShardKvStore {
         }
     }
 
-    /// Get the value of the string key
-    fn get(&mut self, key: String) -> Result<Option<String>> {
-        if let Some(cmd_pos) = self.index_map.get(&key) {
-            if let Some(reader) = self.reader_map.get_mut(&cmd_pos.gen) {
-                // move reader to log pointer and read command
-                reader.seek(SeekFrom::Start(cmd_pos.pos))?;
-                let mut buf = vec![0; cmd_pos.len as usize];
-                reader.read_exact(&mut buf)?;
-                let cmd: Command = serde_json::from_slice(&buf)?;
-                // println!("cmd: {}", cmd);
-                match cmd {
-                    Command::Set {key: _, value} => {
-                        Ok(Some(value))
-                    },
-                    Command::Remove { key: _ } => {
-                        Ok(None)
-                    }
-                }
-            } else {
-                Err(KvError::ReaderNotFound)
-            }
-        } else {
-            Ok(None)
-        }
-        // Ok(None)
-    }
-
+    /// compact out-of-date log
     fn compaction(&mut self) -> Result<()> {
         let dir = self.path.as_path();
         let temp_gen = self.curr_gen + 1;
         let mut writer = new_log_file(dir, temp_gen)?;
 
         // index_map -> currently valid (key, value)
-        for cmd_pos in self.index_map.values_mut() {
+        for mut cmd_pos in self.index_map.iter_mut() {
             if let Some(reader) = self.reader_map.get_mut(&cmd_pos.gen) {
                 // move reader to log pointer and read command
                 reader.seek(SeekFrom::Start(cmd_pos.pos))?;
@@ -170,13 +206,16 @@ impl ShardKvStore {
         let reader = BufReaderWithPos::new(File::open(log_path(dir, temp_gen))?);
         new_reader_map.insert(temp_gen,  reader);
 
+        // store the current gen number
+        self.safe_point.store(temp_gen, Ordering::SeqCst);
+
         // create new log file writer
         self.curr_gen += 2;
         self.writer = new_log_file(dir, self.curr_gen)?;
         let reader = BufReaderWithPos::new(File::open(log_path(dir, self.curr_gen))?);
         new_reader_map.insert(self.curr_gen,  reader);
 
-        // delete old file 
+        // delete old file
         for &gen in self.reader_map.keys() {
             fs::remove_file(log_path(dir, gen))?;
         }
@@ -189,24 +228,65 @@ impl ShardKvStore {
     }
 }
 
-impl KvStore {
-    pub fn open(dir: impl Into<PathBuf>) -> Result<impl KvsEngine> {
-        let store = ShardKvStore::open(dir).unwrap();
-        Ok(KvStore(Arc::new(Mutex::new(store))))
+pub struct KvReader {
+    path: Arc<PathBuf>,
+    // safe point to sync the compaction gen number
+    safe_point: Arc<AtomicU64>,
+    // concurrent map string key -> command pos
+    index_map: Arc<DashMap<String, CommandPos>>,
+    // map gen number -> bufReader
+    reader_map: RefCell<HashMap<u64, BufReaderWithPos<File>>>,
+}
+
+impl KvReader {
+    /// Get the value of the string key
+    pub fn get(&self, key: String) -> Result<Option<String>> {
+        let safe_point = self.safe_point.load(Ordering::SeqCst);
+        
+        // println!("reader_map: {:?} safe point: {}", self.reader_map.borrow().keys(), safe_point);
+        self.reader_map.borrow_mut().retain(|&k, _| k >= safe_point);
+        
+        if let Some(cmd_pos) = self.index_map.get(&key) {
+            let cmd_pos = cmd_pos.value();
+            // if the reader hashmap not contains the key, open corresponding file ans create the buf reader
+            let mut readers = self.reader_map.borrow_mut();
+            if !readers.contains_key(&cmd_pos.gen) { 
+                let file = File::open(log_path(self.path.as_path(), cmd_pos.gen))?;
+                let reader = BufReaderWithPos::new(file);
+                readers.insert(cmd_pos.gen, reader);
+            }
+            
+            let reader = readers.get_mut(&cmd_pos.gen).unwrap();
+            // move reader to log pointer and read command
+            reader.seek(SeekFrom::Start(cmd_pos.pos))?;
+            let mut buf = vec![0; cmd_pos.len as usize];
+            reader.read_exact(&mut buf)?;
+            let cmd: Command = serde_json::from_slice(&buf)?;
+            // println!("cmd: {}", cmd);
+            match cmd {
+                Command::Set {key: _, value} => {
+                    Ok(Some(value))
+                },
+                Command::Remove { key: _ } => {
+                    Ok(None)
+                }
+            }
+        } else {
+            Ok(None)
+        }
+        // Ok(None)
     }
 }
 
-impl KvsEngine for KvStore {
-    fn get(&self, key: String) -> Result<Option<String>> {
-        self.0.lock().unwrap().get(key)
-    }
-
-    fn set(&self, key: String, value: String) -> Result<()> {
-        self.0.lock().unwrap().set(key, value)
-    }
-
-    fn remove(&self, key: String) -> Result<()> {
-        self.0.lock().unwrap().remove(key)
+// create a new reader map
+impl Clone for KvReader {
+    fn clone(&self) -> Self {
+        KvReader { 
+            path: self.path.clone(),
+            safe_point: self.safe_point.clone(),
+            index_map: self.index_map.clone(),
+            reader_map: RefCell::new(HashMap::new()),
+        }
     }
 }
 
@@ -232,7 +312,7 @@ fn sorted_gen_list(path: &Path) -> Result<Vec<u64>> {
 }
 
 /// load log file and fill the index map
-fn load(gen: u64, index_map: &mut HashMap<String, CommandPos>, reader: &mut BufReaderWithPos<File>) -> Result<u64> {
+fn load(gen: u64, index_map: &mut Arc<DashMap<String, CommandPos>>, reader: &mut BufReaderWithPos<File>) -> Result<u64> {
     // Creates a JSON deserializer from an io::Read
     let mut stream = Deserializer::from_reader(reader).into_iter::<Command>();
     // Get current position 
@@ -255,7 +335,7 @@ fn load(gen: u64, index_map: &mut HashMap<String, CommandPos>, reader: &mut BufR
             },
             Command::Remove { key } => {
                 if let Some(old_cmd) = index_map.remove(&key) {
-                    uncompacted += old_cmd.len;
+                    uncompacted += old_cmd.1.len;
                 }
                 uncompacted += (curr_offset - offset) as u64;
             }
