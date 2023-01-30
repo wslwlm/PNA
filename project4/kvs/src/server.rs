@@ -1,4 +1,4 @@
-use crate::{KvsEngine, Protocol, Request, GetResponse, SetResponse, RemoveResponse, Result};
+use crate::{KvsEngine, Request, GetResponse, SetResponse, RemoveResponse, Result, Protocol};
 use std::net::{ToSocketAddrs, TcpStream};
 use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 use crate::thread_pool::{ThreadPool};
@@ -28,20 +28,18 @@ impl<E: KvsEngine, P: ThreadPool> Server<E, P> {
             }
 
             let engine = self.engine.clone();
-
-            match stream {
-                Ok(stream) => {
-                    /* handle connection */
-                    self.pool.spawn(move|| {
-                        handle_connection(engine, stream).unwrap();
-                    });
-                },
-                Err(e) => {
-                    /* connection error */
-                    println!("err: {}", e.to_string());
-                    return Err(e)?;
+            self.pool.spawn(move || {
+                match stream {
+                    Ok(stream) => {
+                        /* handle connection */
+                            handle_connection(engine, stream).unwrap();
+                    },
+                    Err(e) => {
+                        /* connection error */
+                        println!("err: {}", e.to_string());
+                    }
                 }
-            }
+            });
         }
         Ok(())
     }

@@ -6,8 +6,8 @@ pub trait ThreadPool {
     fn spawn<F>(&self, job: F) where F: FnOnce() + Send + 'static;
 }
 
-mod naivethreadpool;
+mod shared_queue;
 mod rayon;
 
-pub use self::naivethreadpool::NaiveThreadPool;
+pub use self::shared_queue::SharedQueueThreadPool;
 pub use self::rayon::RayonThreadPool;

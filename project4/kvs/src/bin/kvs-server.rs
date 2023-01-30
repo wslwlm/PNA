@@ -3,7 +3,7 @@ use std::{fs, env};
 use structopt::StructOpt;
 use log::{info};
 use env_logger::{Env};
-use kvs::thread_pool::{ThreadPool, NaiveThreadPool};
+use kvs::thread_pool::{ThreadPool, SharedQueueThreadPool};
 use num_cpus;
 use std::sync::{Arc, atomic::{AtomicBool}};
 
@@ -32,7 +32,7 @@ fn current_engine() -> Result<Option<String>> {
 
 fn run_with_engine<E: KvsEngine>(engine: E, addr: String) -> Result<()> {
     let cpus =  num_cpus::get();
-    let pool = NaiveThreadPool::new(cpus)?;
+    let pool = SharedQueueThreadPool::new(cpus)?;
     let is_stop = Arc::new(AtomicBool::new(false));
     let mut server = Server::new(engine, pool, is_stop)?;
     server.run(addr)?;

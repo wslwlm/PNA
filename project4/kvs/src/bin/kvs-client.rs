@@ -3,6 +3,7 @@ use std::{env, process};
 use structopt::StructOpt;
 use std::io::{Read, Write};
 use env_logger::{Env};
+use log::{info};
 
 #[derive(StructOpt, Debug, PartialEq)]
 #[structopt(name = env!("CARGO_PKG_NAME"), version = env!("CARGO_PKG_VERSION"), author = env!("CARGO_PKG_AUTHORS"))]

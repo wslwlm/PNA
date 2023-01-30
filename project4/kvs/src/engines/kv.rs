@@ -17,7 +17,7 @@ use std::cell::{RefCell, RefMut};
 use std::sync::atomic::Ordering;
 use log::info;
 
-const COMPACTION_LIMIT: u64 = 100;
+const COMPACTION_LIMIT: u64 = 1024 * 1024;
 
 // #[derive(Clone)]
 // pub struct KvStore(Arc<RwLock<ShardKvStore>>);
@@ -187,7 +187,6 @@ impl KvWriter {
 
                 let pos = writer.pos;
                 writer.write_all(&buf)?;
-                writer.flush()?;
 
                 cmd_pos.gen = temp_gen;
                 cmd_pos.pos = pos;
@@ -197,31 +196,30 @@ impl KvWriter {
                 return Err(KvError::ReaderNotFound);
             }
         }
+        // flush written log after compaction finish
+        writer.flush()?;
 
-        let mut new_reader_map = HashMap::new();
-        // clear the reader_map
-        // self.reader_map.clear();
-
-        // create new log file reader
+        // create compaction log file reader
         let reader = BufReaderWithPos::new(File::open(log_path(dir, temp_gen))?);
-        new_reader_map.insert(temp_gen,  reader);
+        self.reader_map.insert(temp_gen,  reader);
 
         // store the current gen number
         self.safe_point.store(temp_gen, Ordering::SeqCst);
 
-        // create new log file writer
+        // create new log file writer & reader
         self.curr_gen += 2;
         self.writer = new_log_file(dir, self.curr_gen)?;
         let reader = BufReaderWithPos::new(File::open(log_path(dir, self.curr_gen))?);
-        new_reader_map.insert(self.curr_gen,  reader);
+        self.reader_map.insert(self.curr_gen,  reader);
 
-        // delete old file
-        for &gen in self.reader_map.keys() {
+        // remove stale files
+        // The file cannot be removed immediately because the `KvReader` still keep the file handle.
+        // When `KvReader` used next, it will clear the file handle 
+        let stale_gens = sorted_gen_list(&self.path)?.into_iter().filter(|gen| *gen < temp_gen);
+        for gen in stale_gens {
+            self.reader_map.remove(&gen);
             fs::remove_file(log_path(dir, gen))?;
         }
-        // replace old reader_map with new reader_map
-        self.reader_map.clear();
-        self.reader_map = new_reader_map;
 
         self.uncompacted = 0;
         Ok(())
@@ -244,6 +242,7 @@ impl KvReader {
         let safe_point = self.safe_point.load(Ordering::SeqCst);
         
         // println!("reader_map: {:?} safe point: {}", self.reader_map.borrow().keys(), safe_point);
+        // remove the stale file handle
         self.reader_map.borrow_mut().retain(|&k, _| k >= safe_point);
         
         if let Some(cmd_pos) = self.index_map.get(&key) {

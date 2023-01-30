@@ -1,4 +1,5 @@
 use log::{info, warn};
+use sled::Shared;
 
 use crate::{Result};
 use super::ThreadPool;
@@ -27,6 +28,7 @@ impl Worker {
                     if let Err(e) = panic::catch_unwind(wrapper) {
                         warn!("job execute panic error: {:?}", e);
                     }
+                    // job();
                 },
                 Err(e) => {
                     info!("Worker {id} disconnected, shutdown");
@@ -39,14 +41,14 @@ impl Worker {
     }
 }
 
-pub struct NaiveThreadPool {
+pub struct SharedQueueThreadPool {
     workers: Vec<Worker>,
     sender: Option<mpsc::Sender<Job>>,
 }
 
 type Job = Box<dyn FnOnce() + Send + 'static>;
 
-impl ThreadPool for NaiveThreadPool {
+impl ThreadPool for SharedQueueThreadPool {
     fn new(threads: usize) -> Result<Self> {
         let (sender, receiver) = mpsc::channel();
         let receiver = Arc::new(Mutex::new(receiver));
@@ -56,7 +58,7 @@ impl ThreadPool for NaiveThreadPool {
             workers.push(Worker::new(id, Arc::clone(&receiver)));
         }
 
-        Ok(NaiveThreadPool {
+        Ok(SharedQueueThreadPool {
             workers,
             sender: Some(sender),
         })
@@ -69,7 +71,7 @@ impl ThreadPool for NaiveThreadPool {
     }
 }
 
-impl Drop for NaiveThreadPool {
+impl Drop for SharedQueueThreadPool {
     fn drop(&mut self) {
         drop(self.sender.take());
 
