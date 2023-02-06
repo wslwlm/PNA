@@ -1,3 +1,5 @@
+use std::borrow::{BorrowMut, Borrow};
+use std::sync::RwLock;
 use std::{fmt};
 use std::fs::{self, OpenOptions};
 use std::fs::File;
@@ -6,12 +8,17 @@ use serde::{Serialize, Deserialize};
 use serde_json::Deserializer;
 use std::io::{self, Seek, SeekFrom, Write, Read, BufReader, BufWriter};
 use std::path::{Path, PathBuf};
-use crate::{KvsEngine, KvError, Result};
 use std::sync::{Arc, Mutex, atomic::{AtomicU64}};
 use dashmap::DashMap;
 use std::cell::{RefCell};
 use std::sync::atomic::Ordering;
-use log::info;
+use log::{info, error};
+use tokio::sync::oneshot;
+use futures::Future;
+use std::pin::Pin;
+
+use crate::error;
+use crate::{KvsEngine, KvError, Result, thread_pool::ThreadPool};
 
 const COMPACTION_LIMIT: u64 = 1024 * 1024;
 
@@ -33,18 +40,20 @@ const COMPACTION_LIMIT: u64 = 1024 * 1024;
 // }
 
 #[derive(Clone)]
-pub struct KvStore {
+pub struct KvStore<P: ThreadPool> {
     // concurrent map string key -> command pos
     index_map: Arc<DashMap<String, CommandPos>>,
     // kv writer
     kv_writer: Arc<Mutex<KvWriter>>,
     // kv reader
     kv_reader: KvReader,
+    // writer thread pool
+    pool: P,
 }
 
-impl KvStore {
+impl<P: ThreadPool> KvStore<P> {
     /// open a kv-store with a given directory
-    pub fn open(dir: impl Into<PathBuf>) -> Result<Self> {
+    pub fn open(dir: impl Into<PathBuf>, concurrency: usize) -> Result<Self> {
         let dir_buf = Arc::new(dir.into());
         let path = dir_buf.as_path();
         let gen_list: Vec<u64> = sorted_gen_list(path)?;
@@ -89,21 +98,48 @@ impl KvStore {
                     path: dir_buf,
                     safe_point, 
                     index_map,
-                    reader_map: RefCell::new(HashMap::new())
+                    reader_map: Mutex::new(HashMap::new())
                 },
+                pool: P::new(concurrency)?,
             }
         )
     }
     
 }
 
-impl KvsEngine for KvStore {
-    fn set(&self, key: String, value: String) -> Result<()> {
-        self.kv_writer.lock().unwrap().set(key, value)
+impl<P: ThreadPool> KvsEngine for KvStore<P> {
+    fn set(&self, key: String, value: String) -> Pin<Box<dyn Future<Output = Result<()>> + Send>> {
+        let writer = self.kv_writer.clone();
+        let (tx, rx) = oneshot::channel();
+        self.pool.spawn(move || {
+            let res = writer.lock().unwrap().set(key, value);
+            if tx.send(res).is_err() {
+                error!("Receiving end is dropped");
+            }
+        });
+        
+        Box::pin(
+            async move {
+                rx.await.unwrap()
+            }
+        )
     }
 
-    fn remove(&self, key: String) -> Result<()> {
-        self.kv_writer.lock().unwrap().remove(key)
+    fn remove(&self, key: String) -> Pin<Box<dyn Future<Output = Result<()>> + Send>> {
+        let writer = self.kv_writer.clone();
+        let (tx, rx) = oneshot::channel();
+        self.pool.spawn(move || {
+            let res = writer.lock().unwrap().remove(key);
+            if tx.send(res).is_err() {
+                error!("Receiving end is dropped");
+            }
+        });
+        
+        Box::pin(
+            async move {
+                rx.await.unwrap()
+            }
+        )
     }
 
     fn get(&self, key: String) -> Result<Option<String>> {
@@ -229,7 +265,7 @@ pub struct KvReader {
     // concurrent map string key -> command pos
     index_map: Arc<DashMap<String, CommandPos>>,
     // map gen number -> bufReader
-    reader_map: RefCell<HashMap<u64, BufReaderWithPos<File>>>,
+    reader_map: Mutex<HashMap<u64, BufReaderWithPos<File>>>,
 }
 
 impl KvReader {
@@ -239,12 +275,12 @@ impl KvReader {
         
         // println!("reader_map: {:?} safe point: {}", self.reader_map.borrow().keys(), safe_point);
         // remove the stale file handle
-        self.reader_map.borrow_mut().retain(|&k, _| k >= safe_point);
+        self.reader_map.lock().unwrap().retain(|&k, _| k >= safe_point);
         
         if let Some(cmd_pos) = self.index_map.get(&key) {
             let cmd_pos = cmd_pos.value();
             // if the reader hashmap not contains the key, open corresponding file ans create the buf reader
-            let mut readers = self.reader_map.borrow_mut();
+            let mut readers = self.reader_map.lock().unwrap();
             if !readers.contains_key(&cmd_pos.gen) { 
                 let file = File::open(log_path(self.path.as_path(), cmd_pos.gen))?;
                 let reader = BufReaderWithPos::new(file);
@@ -280,7 +316,7 @@ impl Clone for KvReader {
             path: self.path.clone(),
             safe_point: self.safe_point.clone(),
             index_map: self.index_map.clone(),
-            reader_map: RefCell::new(HashMap::new()),
+            reader_map: Mutex::new(HashMap::new()),
         }
     }
 }

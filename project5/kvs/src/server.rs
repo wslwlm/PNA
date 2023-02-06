@@ -24,6 +24,11 @@ impl<E: KvsEngine> Server<E> {
         })
     }
 
+    pub fn sync_run<A: ToSocketAddrs>(&mut self, addr: A) -> Result<()> {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(self.run(addr))
+    }
+
     pub async fn run<A: ToSocketAddrs>(&mut self, addr: A) -> Result<()> {
         let listener = TcpListener::bind(addr).await?;
 
@@ -33,7 +38,7 @@ impl<E: KvsEngine> Server<E> {
             }
 
             let (socket, addr) = listener.accept().await?;
-            println!("accept connectiong: {addr}");
+            // println!("accept connectiong: {addr}");
             let engine = self.engine.clone();
             tokio::spawn(async move {
                 handle_connection(engine, socket).await.unwrap();
@@ -48,7 +53,7 @@ async fn handle_connection<E: KvsEngine>(engine: E, stream: TcpStream) -> Result
     let mut reader: SymmetricalReader<Request> = SymmetricallyFramed::new(FramedRead::new(read_half, LengthDelimitedCodec::new()), SymmetricalBincode::default());
     let mut writer: SymmetricalWriter<Response> = SymmetricallyFramed::new(FramedWrite::new(write_half, LengthDelimitedCodec::new()), SymmetricalBincode::default());
 
-    while let Some(req) = reader.try_next().await? {
+    if let Some(req) = reader.try_next().await? {
         match req {
             Request::Get{key} => {
                 let resp = match engine.get(key) {
@@ -59,14 +64,14 @@ async fn handle_connection<E: KvsEngine>(engine: E, stream: TcpStream) -> Result
             },
             Request::Set { key, value } => {
                 // println!("[SetRequest] {key}: {value}");
-                let resp = match engine.set(key, value) {
+                let resp = match engine.set(key, value).await {
                     Ok(_) => Response::Set,
                     Err(e) => Response::Err(e.to_string()),
                 };
                 writer.send(resp).await?;
             },
             Request::Remove { key } => {
-                let resp = match engine.remove(key) {
+                let resp = match engine.remove(key).await {
                     Ok(_) => Response::Remove,
                     Err(e) => Response::Err(e.to_string()),
                 };

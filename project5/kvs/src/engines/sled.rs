@@ -1,29 +1,50 @@
+use crate::thread_pool::ThreadPool;
 use crate::{KvsEngine, KvError, Result};
+use tokio::sync::oneshot;
 use sled::{self, Db, Tree};
 use std::path::PathBuf;
-use std::io;
+use std::pin::Pin;
+use futures::Future;
 use std::sync::Arc;
+use log::{error};
 
 #[derive(Clone)]
-pub struct SledEngine {
+pub struct SledEngine<P: ThreadPool> {
     db: Arc<Db>,
+    pool: P,
 }
 
-impl SledEngine {
-    pub fn open(dir: impl Into<PathBuf>) -> Result<impl KvsEngine> {
+impl<P: ThreadPool> SledEngine<P> {
+    pub fn open(dir: impl Into<PathBuf>, concurrency: usize) -> Result<impl KvsEngine> {
         let db = sled::open(dir.into())?;
         Ok(SledEngine {
             db: Arc::new(db),
+            pool: P::new(concurrency)?,
         })
     }
 }
 
-impl KvsEngine for SledEngine {
-    fn set(&self, key: String, value: String) -> Result<()> {
-        let tree: &Tree = &self.db;
-        tree.insert(key, value.into_bytes()).map(|_| ())?;
-        tree.flush()?;
-        Ok(())
+impl<P: ThreadPool> KvsEngine for SledEngine<P> {
+    fn set(&self, key: String, value: String) -> Pin<Box<dyn Future<Output = Result<()>> + Send>> {
+        let tree = self.db.clone();
+        let (tx, rx) = oneshot::channel();
+        self.pool.spawn(move || {
+            let res = (|| {
+                tree.insert(key, value.into_bytes()).map(|_| ())?;
+                tree.flush()?;
+                Ok(())
+            })();
+
+            if tx.send(res).is_err() {
+                error!("Receiving end is dropped");
+            }
+        });
+        
+        Box::pin(
+            async move {
+                rx.await.unwrap()
+            }
+        )
     }
 
     fn get(&self, key: String) -> Result<Option<String>> {
@@ -43,10 +64,25 @@ impl KvsEngine for SledEngine {
             .transpose()?)
     }
 
-    fn remove(&self, key: String) -> Result<()> {
-        let tree: &Tree = &self.db;
-        tree.remove(key)?.ok_or(KvError::KeyNotFound)?;
-        tree.flush()?;
-        Ok(())
+    fn remove(&self, key: String) -> Pin<Box<dyn Future<Output = Result<()>> + Send>> {
+        let tree = self.db.clone();
+        let (tx, rx) = oneshot::channel();
+        self.pool.spawn(move || {
+            let res = (|| {
+                tree.remove(key)?.ok_or(KvError::KeyNotFound)?;
+                tree.flush()?;
+                Ok(())
+            })();
+
+            if tx.send(res).is_err() {
+                error!("Receiving end is dropped");
+            }
+        });
+
+        Box::pin(
+            async move {
+                rx.await.unwrap()
+            }
+        )
     }
 }

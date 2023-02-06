@@ -1,5 +1,5 @@
 extern crate tokio;
-use kvs::{KvStore, SledEngine, KvsEngine, Result, KvError, Server};
+use kvs::{KvStore, SledEngine, KvsEngine, Result, KvError, Server, thread_pool::RayonThreadPool};
 use std::{fs, env};
 use structopt::StructOpt;
 use log::{info};
@@ -65,10 +65,12 @@ async fn main() -> Result<()> {
     let engine_file = env::current_dir()?.join("engine");
     fs::write(engine_file, format!("{}", engine))?;
 
+    let cpu_num = num_cpus::get();
+
     if engine == "kvs" {
-        run_with_engine(KvStore::open(env::current_dir()?)?, addr).await?;
+        run_with_engine(KvStore::<RayonThreadPool>::open(env::current_dir()?, cpu_num)?, addr).await?;
     } else if engine == "sled" {
-        run_with_engine(SledEngine::open(env::current_dir()?)?, addr).await?;
+        run_with_engine(SledEngine::<RayonThreadPool>::open(env::current_dir()?, cpu_num)?, addr).await?;
     } else {
         return Err(KvError::WrongEngine);
     }

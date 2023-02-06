@@ -1,3 +1,5 @@
+#![feature(type_alias_impl_trait)]
+
 pub use engines::{KvStore, SledEngine, KvsEngine};
 // pub use network::{Request, GetResponse, SetResponse, RemoveResponse, Protocol};
 pub use error::{KvError, Result};
