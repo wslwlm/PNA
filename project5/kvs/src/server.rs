@@ -1,6 +1,7 @@
 extern crate tokio;
 extern crate futures;
 
+use tokio::sync::oneshot::Receiver;
 use futures::{TryStreamExt, SinkExt};
 use tokio::{spawn};
 use tokio::net::{TcpListener, TcpStream, ToSocketAddrs};
@@ -24,26 +25,25 @@ impl<E: KvsEngine> Server<E> {
         })
     }
 
-    pub fn sync_run<A: ToSocketAddrs>(&mut self, addr: A) -> Result<()> {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(self.run(addr))
-    }
-
-    pub async fn run<A: ToSocketAddrs>(&mut self, addr: A) -> Result<()> {
+    pub async fn run<A: ToSocketAddrs>(&mut self, addr: A, rx: Receiver<()>) -> Result<()> {
         let listener = TcpListener::bind(addr).await?;
 
-        loop {
-            if self.is_stop.load(Ordering::SeqCst) {
-                break;
+        tokio::select! {
+            _ = async move {
+                loop {
+                    let (socket, addr) = listener.accept().await.unwrap();
+                
+                    let engine = self.engine.clone();
+                    tokio::spawn(async move {
+                        handle_connection(engine, socket).await.unwrap();
+                    });
+                }
+            } => {}
+            _ = rx => {
+                // println!("terminating accept loop");
             }
-
-            let (socket, addr) = listener.accept().await?;
-            // println!("accept connectiong: {addr}");
-            let engine = self.engine.clone();
-            tokio::spawn(async move {
-                handle_connection(engine, socket).await.unwrap();
-            });
         }
+
         Ok(())
     }
 }
@@ -56,7 +56,7 @@ async fn handle_connection<E: KvsEngine>(engine: E, stream: TcpStream) -> Result
     if let Some(req) = reader.try_next().await? {
         match req {
             Request::Get{key} => {
-                let resp = match engine.get(key) {
+                let resp = match engine.get(key).await {
                     Ok(value) => Response::Get(value),
                     Err(e) => Response::Err(e.to_string()),
                 };

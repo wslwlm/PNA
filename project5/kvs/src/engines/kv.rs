@@ -4,6 +4,7 @@ use std::{fmt};
 use std::fs::{self, OpenOptions};
 use std::fs::File;
 use std::collections::HashMap;
+use rand::seq::index;
 use serde::{Serialize, Deserialize};
 use serde_json::Deserializer;
 use std::io::{self, Seek, SeekFrom, Write, Read, BufReader, BufWriter};
@@ -16,6 +17,7 @@ use log::{info, error};
 use tokio::sync::oneshot;
 use futures::Future;
 use std::pin::Pin;
+use crossbeam_queue::ArrayQueue;
 
 use crate::error;
 use crate::{KvsEngine, KvError, Result, thread_pool::ThreadPool};
@@ -46,9 +48,11 @@ pub struct KvStore<P: ThreadPool> {
     // kv writer
     kv_writer: Arc<Mutex<KvWriter>>,
     // kv reader
-    kv_reader: KvReader,
-    // writer thread pool
+    // kv_reader: KvReader,
+    // KvStore thread pool
     pool: P,
+    // reader queue
+    reader_queue: Arc<ArrayQueue<KvReader>>,
 }
 
 impl<P: ThreadPool> KvStore<P> {
@@ -82,25 +86,34 @@ impl<P: ThreadPool> KvStore<P> {
 
         let safe_point = Arc::new(AtomicU64::new(first_gen));
 
+        let kv_writer = Arc::new(Mutex::new(KvWriter {
+            path: dir_buf.clone(),
+            curr_gen,
+            safe_point: safe_point.clone(),
+            writer,
+            index_map: index_map.clone(),
+            reader_map,
+            uncompacted,
+        }));
+
+        let reader = KvReader { 
+            path: dir_buf,
+            safe_point: safe_point, 
+            index_map: index_map.clone(),
+            reader_map: Mutex::new(HashMap::new())
+        };
+
+        let reader_queue = Arc::new(ArrayQueue::new(concurrency));
+        for i in 0..concurrency {
+            reader_queue.push(reader.clone());
+        }
+
         Ok(
             KvStore { 
-                index_map: index_map.clone(),
-                kv_writer: Arc::new(Mutex::new(KvWriter {
-                    path: dir_buf.clone(),
-                    curr_gen,
-                    safe_point: safe_point.clone(),
-                    writer,
-                    index_map: index_map.clone(),
-                    reader_map,
-                    uncompacted,
-                })),
-                kv_reader: KvReader { 
-                    path: dir_buf,
-                    safe_point, 
-                    index_map,
-                    reader_map: Mutex::new(HashMap::new())
-                },
+                index_map: index_map,
+                kv_writer,
                 pool: P::new(concurrency)?,
+                reader_queue,
             }
         )
     }
@@ -142,8 +155,25 @@ impl<P: ThreadPool> KvsEngine for KvStore<P> {
         )
     }
 
-    fn get(&self, key: String) -> Result<Option<String>> {
-        self.kv_reader.get(key)
+    fn get(&self, key: String) -> Pin<Box<dyn Future<Output = Result<Option<String>>> + Send>> {
+        let reader_queue = self.reader_queue.clone();
+        let (tx, rx) = oneshot::channel();
+        self.pool.spawn(move || {
+            // len(reader_queue) == concurrency -> queue not empty when pop
+            // if queue empty -> thread pool spawn blocking
+            let reader = reader_queue.pop().unwrap();
+            let res = reader.get(key);
+            reader_queue.push(reader).unwrap();
+            if tx.send(res).is_err() {
+                error!("Receiving end close");
+            }
+        });
+
+        Box::pin(
+            async move {
+                rx.await.unwrap()
+            }
+        )
     }
 }
 
@@ -318,6 +348,12 @@ impl Clone for KvReader {
             index_map: self.index_map.clone(),
             reader_map: Mutex::new(HashMap::new()),
         }
+    }
+}
+
+impl std::fmt::Debug for KvReader {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "kv reader")
     }
 }
 

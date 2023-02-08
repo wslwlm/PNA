@@ -47,8 +47,8 @@ impl<P: ThreadPool> KvsEngine for SledEngine<P> {
         )
     }
 
-    fn get(&self, key: String) -> Result<Option<String>> {
-        let tree: &Tree = &self.db;
+    fn get(&self, key: String) -> Pin<Box<dyn Future<Output = Result<Option<String>>> + Send>> {
+        let db = self.db.clone();
         // if let Some(vec) = tree.get(key)? {
         //     let v = String::from_utf8((*vec).try_into().unwrap())
         //         .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid data"))?;
@@ -56,12 +56,23 @@ impl<P: ThreadPool> KvsEngine for SledEngine<P> {
         // } else {
         //     Ok(None)
         // }
-
-        Ok(tree
-            .get(key)?
-            .map(|i_vec| AsRef::<[u8]>::as_ref(&i_vec).to_vec())
-            .map(String::from_utf8)
-            .transpose()?)
+        let (tx, rx) = oneshot::channel();
+        self.pool.spawn(move || {
+            let res = Ok(db
+                .get(key).unwrap()
+                .map(|i_vec| AsRef::<[u8]>::as_ref(&i_vec).to_vec())
+                .map(String::from_utf8)
+                .transpose().unwrap());
+            if tx.send(res).is_err() {
+                error!("Receiving end is dropped");
+            }
+        });
+        
+        Box::pin(
+            async move {
+                rx.await.unwrap()
+            }
+        )
     }
 
     fn remove(&self, key: String) -> Pin<Box<dyn Future<Output = Result<()>> + Send>> {

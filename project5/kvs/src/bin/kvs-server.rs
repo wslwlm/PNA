@@ -1,5 +1,6 @@
 extern crate tokio;
 use kvs::{KvStore, SledEngine, KvsEngine, Result, KvError, Server, thread_pool::RayonThreadPool};
+use tokio::sync::oneshot;
 use std::{fs, env};
 use structopt::StructOpt;
 use log::{info};
@@ -32,7 +33,8 @@ fn current_engine() -> Result<Option<String>> {
 async fn run_with_engine<E: KvsEngine>(engine: E, addr: String) -> Result<()> {
     let is_stop = Arc::new(AtomicBool::new(false));
     let mut server = Server::new(engine, is_stop)?;
-    server.run(addr).await?;
+    let (tx, rx) = oneshot::channel();
+    server.run(addr, rx).await?;
     Ok(())
 }
 

@@ -23,7 +23,7 @@ fn write_queued_kvstore(c: &mut Criterion) {
         group.bench_with_input(format!("kvs_{}", i), i, |b, &i| {
             let temp_dir = TempDir::new().unwrap();
             let addr = "127.0.0.1:4000";
-            let entries:usize = 1000;
+            let entries_len:usize = 1000;
             
             let is_stop = Arc::new(AtomicBool::new(false));
             let pool = SharedQueueThreadPool::new(i).unwrap();
@@ -70,10 +70,10 @@ fn write_queued_kvstore(c: &mut Criterion) {
         group.bench_with_input(format!("sled_{}", i), i, |b, &i| {
             let temp_dir = TempDir::new().unwrap();
             let addr = "127.0.0.1:4000";
-            let entries:usize = 1000;
+            let entries_len:usize = 1000;
             
             let is_stop = Arc::new(AtomicBool::new(false));
-            let pool = SharedQueuePool::new(i).unwrap();
+            let pool = SharedQueueThreadPool::new(i).unwrap();
             let store = SledEngine::open(temp_dir.path()).unwrap();
             let mut server = Server::new(store, pool, is_stop.clone()).unwrap();
             // create a new thread to run server
@@ -106,7 +106,7 @@ fn write_queued_kvstore(c: &mut Criterion) {
                 for handle in handles {
                     handle.join().unwrap();
                 }
-
+            });
             // stop server
             is_stop.store(true, Ordering::SeqCst);
 
@@ -129,7 +129,7 @@ fn write_rayon_kvstore(c: &mut Criterion) {
         group.bench_with_input(format!("kvs_{}", i), i, |b, &i| {
             let temp_dir = TempDir::new().unwrap();
             let addr = "127.0.0.1:4000";
-            let entries:usize = 1000;
+            let entries_len:usize = 1000;
             
             let is_stop = Arc::new(AtomicBool::new(false));
             let pool = RayonThreadPool::new(i).unwrap();
@@ -176,7 +176,7 @@ fn write_rayon_kvstore(c: &mut Criterion) {
         group.bench_with_input(format!("sled_{}", i), i, |b, &i| {
             let temp_dir = TempDir::new().unwrap();
             let addr = "127.0.0.1:4000";
-            let entries:usize = 1000;
+            let entries_len:usize = 1000;
             
             let is_stop = Arc::new(AtomicBool::new(false));
             let pool = RayonThreadPool::new(i).unwrap();
@@ -238,7 +238,7 @@ fn read_queued_kvstore(c: &mut Criterion) {
             let entries_len:usize = 1000;
             
             let is_stop = Arc::new(AtomicBool::new(false));
-            let pool = SharePool::new(i).unwrap();
+            let pool = SharedQueueThreadPool::new(i).unwrap();
             // previous set the key/value pairs 
             let store = KvStore::open(temp_dir.path()).unwrap();
             for j in 0..entries_len {
@@ -549,5 +549,5 @@ criterion_group!(
     name = benches;
     config = Criterion::default().sample_size(10);
     // targets = write_queued_kvstore, write_rayon_kvstore, read_queued_kvstore, read_rayon_kvstore);
-    targets = read_rayon_kvstore，concurrent_get);
+    targets = read_rayon_kvstore, concurrent_get);
 criterion_main!(benches);

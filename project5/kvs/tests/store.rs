@@ -176,7 +176,7 @@ async fn concurrent_set() -> Result<()> {
     let store = KvStore::<RayonThreadPool>::open(temp_dir.path(), 1)?;
     for i in 0..10000 {
         assert_eq!(
-            store.get(format!("key{}", i))?,
+            store.get(format!("key{}", i)).await?,
             Some(format!("value{}", i))
         );
     }
@@ -184,57 +184,56 @@ async fn concurrent_set() -> Result<()> {
     Ok(())
 }
 
-// #[tokio::test]
-// async fn concurrent_get() -> Result<()> {
-//     let temp_dir = TempDir::new().expect("unable to create temporary working directory");
-//     let store = KvStore::<RayonThreadPool>::open(temp_dir.path(), 8)?;
-//     // We only check concurrent get in this test, so we set sequentially here
-//     for i in 0..100 {
-//         store
-//             .set(format!("key{}", i), format!("value{}", i))
-//             .await
-//             .unwrap();
-//     }
+#[tokio::test]
+async fn concurrent_get() -> Result<()> {
+    let temp_dir = TempDir::new().expect("unable to create temporary working directory");
+    let store = KvStore::<RayonThreadPool>::open(temp_dir.path(), 8)?;
+    // We only check concurrent get in this test, so we set sequentially here
+    for i in 0..100 {
+        store
+            .set(format!("key{}", i), format!("value{}", i))
+            .await
+            .unwrap();
+    }
 
-//     let runtime = Runtime::new()?;
-//     let executor = runtime.executor();
-//     runtime.block_on_all(future::lazy(move || {
-//         for thread_id in 0..100 {
-//             for i in 0..100 {
-//                 let key_id = (i + thread_id) % 100;
-//                 executor.spawn(
-//                     store
-//                         .get(format!("key{}", key_id))
-//                         .map(move |res| {
-//                             assert_eq!(res, Some(format!("value{}", key_id)));
-//                         })
-//                         .map_err(|_| ()),
-//                 );
-//             }
-//         }
-//         future::ok::<(), KvsError>(())
-//     }))?;
+    let barrier = Arc::new(Barrier::new(10001));
+    for thread_id in 0..100 {
+        for i in 0..100 {
+            let store = store.clone();
+            let barrier = barrier.clone();
+            let key_id = (i + thread_id) % 100;
+            tokio::spawn(async move {
+                store
+                    .get(format!("key{}", key_id)).await
+                    .map(move |res| {
+                        assert_eq!(res, Some(format!("value{}", key_id)));
+                    }).unwrap();
+                barrier.wait().await;
+            });
+        }
+    }
+    barrier.wait().await;
 
-//     // reload from disk and test again
-//     let store = KvStore::<RayonThreadPool>::open(temp_dir.path(), 8)?;
-//     let runtime = Runtime::new()?;
-//     let executor = runtime.executor();
-//     runtime.block_on_all(future::lazy(move || {
-//         for thread_id in 0..100 {
-//             for i in 0..100 {
-//                 let key_id = (i + thread_id) % 100;
-//                 executor.spawn(
-//                     store
-//                         .get(format!("key{}", key_id))
-//                         .map(move |res| {
-//                             assert_eq!(res, Some(format!("value{}", key_id)));
-//                         })
-//                         .map_err(|_| ()),
-//                 );
-//             }
-//         }
-//         future::ok::<(), KvsError>(())
-//     }))?;
+    // reload from disk and test again
+    // let store = KvStore::<RayonThreadPool>::open(temp_dir.path(), 8)?;
+    // let runtime = Runtime::new()?;
+    // let executor = runtime.executor();
+    // runtime.block_on_all(future::lazy(move || {
+    //     for thread_id in 0..100 {
+    //         for i in 0..100 {
+    //             let key_id = (i + thread_id) % 100;
+    //             executor.spawn(
+    //                 store
+    //                     .get(format!("key{}", key_id))
+    //                     .map(move |res| {
+    //                         assert_eq!(res, Some(format!("value{}", key_id)));
+    //                     })
+    //                     .map_err(|_| ()),
+    //             );
+    //         }
+    //     }
+    //     future::ok::<(), KvsError>(())
+    // }))?;
 
-//     Ok(())
-// }
+    Ok(())
+}
